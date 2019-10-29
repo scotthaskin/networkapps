@@ -5,6 +5,17 @@
 #include <netdb.h>
 #include <unistd.h>
 #include <stdlib.h>
+#include <string.h>
+#include <iostream>
+
+
+/// @brief This function is used to output an error based on a an error number
+///
+/// @param num - the error number to use
+void outputError( int num, const char *data, int lineNumber )
+{
+    std::cerr << "[" << data << "] Failed with error number [" << num << "] [" << strerror(num) << "] [" << lineNumber << "]" << std::endl;
+}
 
 /// @brief This function is used to create a server socket for the echo service
 ///
@@ -19,7 +30,7 @@ int createServerSocket( int port = -1 )
     if( port < 0 )
     {
         // Using the default port number
-        servent *serviceInfo getservbyname( "echo", "tcp" );
+        servent *serviceInfo = getservbyname( "echo", "tcp" );
         if( serviceInfo )
         {
             port = serviceInfo->s_port;
@@ -33,6 +44,7 @@ int createServerSocket( int port = -1 )
     // Check to see if we have a valid port
     if( !port || port > USHRT_MAX )
     {
+        std::cerr << "Invalid Port Number [" << port << "]" << std::endl;
         return -1;
     }
 
@@ -40,11 +52,13 @@ int createServerSocket( int port = -1 )
 
     if( !protocol )
     {
+        std::cerr << "Failed to get the [tcp] protocol value" << std::endl;
         return -1;
     }
 
     if( ( rval = socket( AF_INET, SOCK_STREAM, protocol->p_proto ) ) == -1 )
     {
+        outputError( errno, "socket()", __LINE__ );
         return -1;
     }
 
@@ -55,12 +69,14 @@ int createServerSocket( int port = -1 )
 
     if( -1 == bind( rval, (const struct sockaddr *) &addr, sizeof(sockaddr_in) ) )
     {
+        outputError( errno, "bind()", __LINE__ );
         close( rval );
         return -1;
     }
 
     if( -1 == listen( rval, 5 ) )
     {
+        outputError( errno, "listen()", __LINE__ );
         close( rval );
         return -1;
     }
@@ -73,13 +89,19 @@ int createServerSocket( int port = -1 )
 /// @param socket - the socket to use
 void runEchoServer( int socket )
 {
+    if( socket < 0 )
+    {
+        std::cerr << "Invalid Socket" << std::endl;
+        return;
+    }
+
     char buffer[1024];
     for(;;)
     {
         int fd = accept( socket, 0, 0 );
         if( fd == -1 )
         {
-            // TBD error message
+            outputError( errno, "accept()", __LINE__ );
             abort(); // Can't recover, goodbye
         }
 
@@ -90,16 +112,21 @@ void runEchoServer( int socket )
             ssize_t loc = 0;
             do
             {
-                loc += write( fd, *(&buffer[loc]), size - loc );
+                loc += write( fd, &buffer[loc], size - loc );
             } while( loc < size );
         }
 
-        if( size )
+        if( size == -1 )
         {
-            // TBD error here
+            outputError( errno, "write()", __LINE__ );
         }
 
         (void) shutdown( fd, SHUT_RDWR );
         (void) close( fd );
     }
+}
+
+int main()
+{
+    runEchoServer( createServerSocket() );
 }
