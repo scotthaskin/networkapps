@@ -4,28 +4,49 @@
 #include <limits.h>
 #include <netdb.h>
 #include <unistd.h>
-#include <stdlib.h>
 #include <string.h>
+#include <getopt.h>
 #include <iostream>
 
+#define ERRNUM_OUTPUT(X) do { outputError( errno, X, __LINE__, __FILE__ ); } while( 0 )
 
 /// @brief This function is used to output an error based on a an error number
 ///
 /// @param num - the error number to use
-void outputError( int num, const char *data, int lineNumber )
+/// @param data - a string to output
+/// @param lineNumber - the line number that the error occured at
+/// @param filename - the name of the file in which the error occured
+void outputError( int num, const char *data, int lineNumber, const char *filename )
 {
-    std::cerr << "[" << data << "] Failed with error number [" << num << "] [" << strerror(num) << "] [" << lineNumber << "]" << std::endl;
+    if( data ) std::cerr << "[" << data << "] ";
+    std::cerr << "Failed with error number [" << num << "] [" << strerror(num) << "] [" << lineNumber << "][" << filename << "]" << std::endl;
 }
 
-/// @brief This function is used to create a server socket for the echo service
-///
-/// @param port - the port number to bind to. A non-positive number indicates
-///               that the default echo port should be used (i.e. 7)
-///
-/// @return the socket, or -1 on error
-int createServerSocket( int port = -1 )
+int main( int argc, char **argv )
 {
-    int rval = -1;
+    int arg = -1;
+    unsigned port = -1;
+
+    struct option options[] = {
+        { "port", required_argument, 0, 'p' },
+        { 0, 0, 0, 0 } // end of list
+    };
+
+    while( ( arg = getopt_long( argc, argv, "p:?", options, 0 ) ) != -1 )
+    {
+        switch( arg )
+        {
+            case 'p':
+                if( optarg )
+                {
+                    port = htons( atoi( optarg ) );
+                }
+                break;
+            default:
+                std::cout << "Usage: " << argv[0] << " [--port|-p] {port number} " << std::endl;
+                return 1;
+        }
+    }
 
     if( port < 0 )
     {
@@ -37,7 +58,7 @@ int createServerSocket( int port = -1 )
         }
         else
         {
-            port = 7; // Default if echo/tcp is not found in the services file
+            port = htons( 7 ); // Default if echo/tcp is not found in the services file
         }
     }
 
@@ -45,7 +66,7 @@ int createServerSocket( int port = -1 )
     if( !port || port > USHRT_MAX )
     {
         std::cerr << "Invalid Port Number [" << port << "]" << std::endl;
-        return -1;
+        return 1;
     }
 
     protoent *protocol = getprotobyname( "tcp" );
@@ -53,13 +74,15 @@ int createServerSocket( int port = -1 )
     if( !protocol )
     {
         std::cerr << "Failed to get the [tcp] protocol value" << std::endl;
-        return -1;
+        return 1;
     }
 
-    if( ( rval = socket( AF_INET, SOCK_STREAM, protocol->p_proto ) ) == -1 )
+    // Setting server socket
+    int sock = -1;
+    if( ( sock = socket( AF_INET, SOCK_STREAM, protocol->p_proto ) ) == -1 )
     {
-        outputError( errno, "socket()", __LINE__ );
-        return -1;
+        ERRNUM_OUTPUT( "socket()" );
+        return 1;
     }
 
     sockaddr_in addr;
@@ -67,42 +90,30 @@ int createServerSocket( int port = -1 )
     addr.sin_port = port;
     addr.sin_addr.s_addr = INADDR_ANY;
 
-    if( -1 == bind( rval, (const struct sockaddr *) &addr, sizeof(sockaddr_in) ) )
+    if( -1 == bind( sock, (const struct sockaddr *) &addr, sizeof(sockaddr_in) ) )
     {
-        outputError( errno, "bind()", __LINE__ );
-        close( rval );
-        return -1;
+        ERRNUM_OUTPUT( "bind()" );
+        close( sock );
+        return 1;
     }
 
-    if( -1 == listen( rval, 5 ) )
+    if( -1 == listen( sock, 5 ) )
     {
-        outputError( errno, "listen()", __LINE__ );
-        close( rval );
-        return -1;
+        ERRNUM_OUTPUT( "listen()" );
+        close( sock );
+        return 1;
     }
 
-    return rval;
-}
-
-/// @brief This function is used to work the echo socket
-///
-/// @param socket - the socket to use
-void runEchoServer( int socket )
-{
-    if( socket < 0 )
-    {
-        std::cerr << "Invalid Socket" << std::endl;
-        return;
-    }
-
+    // Running Server
     char buffer[1024];
-    for(;;)
+
+    for(;;) // Forever
     {
-        int fd = accept( socket, 0, 0 );
+        int fd = accept( sock, 0, 0 );
         if( fd == -1 )
         {
-            outputError( errno, "accept()", __LINE__ );
-            abort(); // Can't recover, goodbye
+            ERRNUM_OUTPUT( "accept()" );
+            return 1; // Can't recover, goodbye
         }
 
         ssize_t size = -1;
@@ -118,15 +129,12 @@ void runEchoServer( int socket )
 
         if( size == -1 )
         {
-            outputError( errno, "write()", __LINE__ );
+            ERRNUM_OUTPUT( "write()" );
         }
 
         (void) shutdown( fd, SHUT_RDWR );
         (void) close( fd );
     }
-}
 
-int main()
-{
-    runEchoServer( createServerSocket() );
+    return 0;
 }
